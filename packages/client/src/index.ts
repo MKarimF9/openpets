@@ -85,7 +85,7 @@ export interface OpenPetsClient {
   heartbeatLease(leaseId: string): Promise<{ readonly leaseId: string; readonly expiresAt: number }>;
   releaseLease(leaseId: string): Promise<{ readonly released: boolean }>;
   react(reaction: OpenPetsReaction, options?: { readonly leaseId?: string }): Promise<unknown>;
-  say(message: string, options?: { readonly reaction?: OpenPetsReaction; readonly leaseId?: string }): Promise<unknown>;
+  say(message: string, options?: { readonly reaction?: OpenPetsReaction; readonly leaseId?: string; readonly speak?: boolean }): Promise<unknown>;
   showMedia(path: string, options?: { readonly message?: string; readonly reaction?: OpenPetsReaction; readonly durationMs?: number; readonly clickUrl?: string; readonly leaseId?: string }): Promise<unknown>;
 }
 
@@ -132,7 +132,7 @@ export function createOpenPetsClient(options: OpenPetsClientOptions = {}): OpenP
       : sendDiscoveredRequest("pet.react", { reaction: validateReaction(reaction), leaseId: reactOptions?.leaseId }, options),
     say: (message, sayOptions) => remote
       ? sendRemoteRequest(remote.endpoint, remote.token, remote.clientId, "pet.say", { message: validateRemoteMessage(message), ...(sayOptions?.reaction === undefined ? {} : { reaction: validateRemoteReaction(sayOptions.reaction) }) }, options)
-      : sendDiscoveredRequest("pet.say", { message, reaction: sayOptions?.reaction, leaseId: sayOptions?.leaseId }, options),
+      : sendDiscoveredRequest("pet.say", { message, reaction: sayOptions?.reaction, leaseId: sayOptions?.leaseId, speak: sayOptions?.speak }, options),
     showMedia: (path, mediaOptions) => {
       if (remote) return unsupportedRemote();
       if (typeof path !== "string" || path.trim().length === 0) {

@@ -17,6 +17,8 @@ allowBuilds:
   esbuild: true
   get-windows: true
   koffi: true
+  openclaw: false
   protobufjs: true
   sharp: true
+  tree-sitter-bash: false
   workerd: true

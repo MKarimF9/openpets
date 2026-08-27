@@ -11,6 +11,8 @@ export const saySchema = z.object({
     .refine((value) => !/https?:\/\/|www\.|\/[\w.-]+\/[\w./-]+|[A-Za-z]:\\/.test(value), "Message contains URL or path-like content.")
     .refine((value) => !/(api[_-]?key|secret|token|password|passwd|BEGIN [A-Z ]+PRIVATE KEY)/i.test(value), "Message looks secret-like."),
   reaction: reactionSchema.optional(),
+  /** Also speak the message aloud through the user's configured TTS provider (e.g. ElevenLabs), if one is set up. */
+  speak: z.boolean().optional(),
 });
 
 export const reactSchema = z.object({ reaction: reactionSchema });
@@ -174,7 +176,7 @@ export async function handleSay(input: unknown, context: ToolContext): Promise<C
     const client = context.client ?? createOpenPetsClient();
     const result = await client.say(parsed.data.message, client.transport === "remote"
       ? (parsed.data.reaction === undefined ? undefined : { reaction: parsed.data.reaction })
-      : { reaction: parsed.data.reaction, leaseId: context.lease!.lease!.leaseId });
+      : { reaction: parsed.data.reaction, leaseId: context.lease!.lease!.leaseId, speak: parsed.data.speak });
     return {
       content: [{ type: "text", text: "OpenPets message sent." }],
       structuredContent: { ok: true, result },
