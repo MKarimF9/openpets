@@ -1,13 +1,16 @@
 import { randomBytes } from "node:crypto";
 import net from "node:net";
 
-import { Notification, shell, systemPreferences } from "electron";
+import { app, Notification, shell, systemPreferences } from "electron";
 
 import { applyAgentPetReaction, applyAgentPetSay, applyAgentPetShowMedia, clearAgentPetLeaseState, repositionConfinedPet, showAgentPet } from "./agent-pet-controller.js";
 import { getAppStateSnapshot, recordOpenPetsActivity } from "./app-state.js";
 import { builtInPet } from "./built-in-pet.js";
-import { applyExternalPetReaction, applyExternalPetSay, applyExternalPetShowMedia, getDefaultPetPaused, isDefaultPetVisible } from "./default-pet-controller.js";
+import { applyExternalPetReaction, applyExternalPetSay, applyExternalPetShowMedia, getDefaultPetPaused, getDefaultPetWindowForPlugins, isDefaultPetVisible } from "./default-pet-controller.js";
 import { createStaleLeaseStatus, LeaseManager } from "./lease-manager.js";
+import { PluginSecretsStore } from "./plugin-secrets.js";
+import { HostProviderService } from "./provider-service.js";
+import { playPetWindowTtsAudio } from "./pet-window.js";
 import { debug, error as logError, info } from "./logger.js";
 import { cleanupUnixSocket, getDiscoveryFilePath, getIpcEndpointConfig, parseIpcEndpoint, protectUnixSocket, removeDiscoveryFile, writeDiscoveryFile, type IpcEndpoint, type IpcEndpointConfig, type OpenPetsDiscoveryFile } from "./local-ipc-paths.js";
 import { stat } from "node:fs/promises";
@@ -442,9 +445,11 @@ async function handleRequest(request: OpenPetsIpcRequest): Promise<unknown> {
   const params = isRecord(request.params) ? request.params : {};
   const message = validateSayMessage(params.message);
   const reaction = params.reaction === undefined ? undefined : validateReaction(params.reaction);
+  const speak = params.speak === true;
   const lease = getLeaseTarget(params.leaseId);
   const petId = lease?.actualTargetPetId ?? getCurrentDefaultPet().id;
-  debug("ipc", "pet say requested", { requestId: request.id, reaction, messageLength: message.length, leaseId: lease?.leaseId, targetKind: lease?.targetKind, actualPetId: lease?.actualTargetPetId });
+  debug("ipc", "pet say requested", { requestId: request.id, reaction, messageLength: message.length, speak, leaseId: lease?.leaseId, targetKind: lease?.targetKind, actualPetId: lease?.actualTargetPetId });
+  if (speak) void speakSayMessageWithConfiguredTts(message);
   if (lease?.targetKind === "explicit") {
     const applied = applyAgentPetSay(lease.actualTargetPetId, message, reaction);
     safeRecordOpenPetsActivity({ kind: "say", reaction, petId, surface: "agent" });
@@ -453,6 +458,29 @@ async function handleRequest(request: OpenPetsIpcRequest): Promise<unknown> {
   const applied = applyExternalPetSay(message, reaction);
   safeRecordOpenPetsActivity({ kind: "say", reaction, petId, surface: "default" });
   return { ok: true, shown: applied.shown, reason: applied.reason, reaction };
+}
+
+/**
+ * Best-effort: synthesizes `message` with the user's configured TTS provider
+ * (e.g. ElevenLabs) and plays it through the default pet window. Used when an
+ * external `pet.say` caller (e.g. a Claude Code session via MCP) opts in with
+ * `speak: true`. Never throws — a TTS failure must not break the say response
+ * itself, since the text bubble already shows regardless.
+ */
+async function speakSayMessageWithConfiguredTts(message: string): Promise<void> {
+  try {
+    const window = getDefaultPetWindowForPlugins();
+    if (!window || window.isDestroyed()) return;
+    const secretsStore = new PluginSecretsStore(app.getPath("userData"));
+    const providerService = new HostProviderService(secretsStore);
+    const snapshot = await providerService.snapshot("tts");
+    const result = await providerService.synthesize(snapshot, message, {});
+    if (!result) return;
+    const dataUrl = `data:${result.mimeType};base64,${Buffer.from(result.bytes).toString("base64")}`;
+    playPetWindowTtsAudio(window, dataUrl);
+  } catch (error) {
+    debug("ipc", "say speak-aloud failed", { error: error instanceof Error ? error.message : String(error) });
+  }
 }
 
 function safeRecordOpenPetsActivity(activity: Parameters<typeof recordOpenPetsActivity>[0]): void {

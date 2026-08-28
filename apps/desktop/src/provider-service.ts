@@ -62,7 +62,7 @@ export class HostProviderService implements HostProviderOperations {
     const request = await this.#request(snapshot, path, { method: "POST", headers: { "content-type": "application/json", accept: "audio/mpeg" }, body: JSON.stringify(body) }, signal);
     try {
       if (!request.response.ok) throw providerError(`Provider request failed with HTTP ${request.response.status}.`, "provider.request.failed");
-      return readBoundedBytes(request.response, 64 * 1024 * 1024, request.abortPromise, "Provider audio response is too large.");
+      return await readBoundedBytes(request.response, 64 * 1024 * 1024, request.abortPromise, "Provider audio response is too large.");
     } finally { await request.release(); }
   }
 
@@ -99,7 +99,7 @@ export class HostProviderService implements HostProviderOperations {
       return { bytes: Buffer.from(hex, "hex"), mimeType: "audio/mpeg" };
     }
     if (profile.adapter === "elevenlabs-tts") {
-      const voice = opts.voice || "21m00Tcm4TlvDq8ikWAM";
+      const voice = opts.voice || "Y4iPFQPm8mLf0o6utheh";
       return { bytes: await this.binary(snapshot, `/text-to-speech/${encodeURIComponent(voice)}`, { text, model_id: profile.model, ...(opts.rate === undefined ? {} : { voice_settings: { speed: opts.rate } }) }, signal), mimeType: "audio/mpeg" };
     }
     if (profile.adapter === "openai-compatible-speech") {

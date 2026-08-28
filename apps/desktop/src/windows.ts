@@ -1,8 +1,9 @@
-import { readFile, realpath, stat } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { join, resolve, relative } from "node:path";
 import sharp from "sharp";
 
-import { app, BrowserWindow, dialog, ipcMain, protocol, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, protocol, screen, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from "electron";
 
 import { getAgentSetupSnapshot, runAgentSetupAction, updateAgentSetupCommandPaths } from "./agent-setup.js";
 import { refreshAgentPetContent } from "./agent-pet-controller.js";
@@ -68,6 +69,43 @@ export async function deleteProviderCredentialForProfile(
 
 const controlCenterRoutes = new Set<ControlCenterRoute>(["dashboard", "conversation", "pets", "settings", "plugins", "integrations"]);
 let controlCenterWindow: BrowserWindow | null = null;
+let controlCenterBoundsSaveTimer: NodeJS.Timeout | null = null;
+
+type SavedWindowBounds = { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
+
+function controlCenterBoundsPath(): string {
+  return join(app.getPath("userData"), "control-center-bounds.json");
+}
+
+function loadControlCenterBounds(): SavedWindowBounds | null {
+  try {
+    const raw = JSON.parse(readFileSync(controlCenterBoundsPath(), "utf8")) as unknown;
+    if (
+      typeof raw !== "object" || raw === null ||
+      !("x" in raw) || !("y" in raw) || !("width" in raw) || !("height" in raw)
+    ) return null;
+    const bounds = raw as SavedWindowBounds;
+    if (![bounds.x, bounds.y, bounds.width, bounds.height].every((value) => Number.isFinite(value))) return null;
+    // Discard bounds that no longer land on any connected display (e.g. an external monitor was unplugged).
+    const onScreen = screen.getAllDisplays().some((display) => {
+      const area = display.workArea;
+      return bounds.x < area.x + area.width && bounds.x + bounds.width > area.x && bounds.y < area.y + area.height && bounds.y + bounds.height > area.y;
+    });
+    return onScreen ? bounds : null;
+  } catch {
+    return null;
+  }
+}
+
+function scheduleControlCenterBoundsSave(window: BrowserWindow): void {
+  if (controlCenterBoundsSaveTimer) clearTimeout(controlCenterBoundsSaveTimer);
+  controlCenterBoundsSaveTimer = setTimeout(() => {
+    controlCenterBoundsSaveTimer = null;
+    if (window.isDestroyed() || window.isMinimized() || window.isMaximized() || window.isFullScreen()) return;
+    const bounds = window.getBounds();
+    void writeFile(controlCenterBoundsPath(), JSON.stringify(bounds)).catch(() => undefined);
+  }, 400);
+}
 let internalUiHandlersInstalled = false;
 const conversationSubscriptions = new Map<number, { readonly token: string; readonly cleanup: () => void }>();
 const voiceAssistantSubscriptions = new Map<number, { readonly token: string; readonly cleanup: () => void }>();
@@ -925,12 +963,14 @@ export function openControlCenterWindow(route: ControlCenterRoute = "dashboard")
     return;
   }
 
+  const savedBounds = loadControlCenterBounds();
+
   const window = new BrowserWindow({
     title: "OpenPets — Control Center",
-    width: 1180,
-    height: 820,
+    ...(savedBounds ?? { width: 1180, height: 820 }),
     minWidth: 820,
-    minHeight: 620,
+    minHeight: 900,
+    resizable: true,
     show: false,
     icon: createAppIcon(),
     backgroundColor: "#f8fbff",
@@ -943,7 +983,10 @@ export function openControlCenterWindow(route: ControlCenterRoute = "dashboard")
   });
 
   controlCenterWindow = window;
+  window.on("resize", () => scheduleControlCenterBoundsSave(window));
+  window.on("move", () => scheduleControlCenterBoundsSave(window));
   syncDockVisibilityForInternalUi();
+  const webContentsId = window.webContents.id;
   window.setMenu(null);
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event) => event.preventDefault());
@@ -959,12 +1002,19 @@ export function openControlCenterWindow(route: ControlCenterRoute = "dashboard")
     else debug("ui", "control center console", fields);
   });
   window.webContents.on("render-process-gone", (_event, details) => {
-    clearConversationSubscription(window.webContents.id);
-    clearVoiceAssistantSubscription(window.webContents.id);
+    clearConversationSubscription(webContentsId);
+    clearVoiceAssistantSubscription(webContentsId);
     console.error("Control Center renderer process gone.", details);
     logError("ui", "control center renderer gone", details);
   });
-  window.on("closed", () => { clearConversationSubscription(window.webContents.id); clearVoiceAssistantSubscription(window.webContents.id); controlCenterWindow = null; syncDockVisibilityForInternalUi(); });
+  window.on("close", () => {
+    if (controlCenterBoundsSaveTimer) { clearTimeout(controlCenterBoundsSaveTimer); controlCenterBoundsSaveTimer = null; }
+    if (!window.isMinimized() && !window.isMaximized() && !window.isFullScreen()) {
+      const bounds = window.getBounds();
+      void writeFile(controlCenterBoundsPath(), JSON.stringify(bounds)).catch(() => undefined);
+    }
+  });
+  window.on("closed", () => { clearConversationSubscription(webContentsId); clearVoiceAssistantSubscription(webContentsId); controlCenterWindow = null; syncDockVisibilityForInternalUi(); });
   window.once("ready-to-show", () => { window.show(); window.focus(); });
   pendingControlCenterRoute = safeRoute;
   window.webContents.on("did-finish-load", () => flushPendingControlCenterRoute(window));

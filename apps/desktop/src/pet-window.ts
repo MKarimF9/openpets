@@ -269,7 +269,9 @@ async function buildPetContextMenuTemplate(action: { readonly label: string; rea
     template.push({ label: action.label, click: action.click });
     return template;
   }
-  const commands = await getDefaultPetPluginCommands();
+  // Show every enabled plugin's commands in the pet menu, not just the first 8 —
+  // otherwise plugins late in the alphabet (e.g. "Prayer Times") silently drop off.
+  const commands = await getDefaultPetPluginCommands(50);
   const topLevel: Electron.MenuItemConstructorOptions[] = [];
   const plugins = new Map<string, { name: string; commands: Electron.MenuItemConstructorOptions[] }>();
   const sorted = [...commands].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
