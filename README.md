@@ -1,6 +1,3 @@
-<p align="center">
-  <img src="assets/openpets.png" alt="OpenPets desktop companion platform" width="100%" />
-</p>
 
 <p align="center">
   <strong>A desktop companion platform with pets, plugins, and optional local agent integrations.</strong>
