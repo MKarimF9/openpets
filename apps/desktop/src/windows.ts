@@ -969,7 +969,7 @@ export function openControlCenterWindow(route: ControlCenterRoute = "dashboard")
     title: "OpenPets — Control Center",
     ...(savedBounds ?? { width: 1180, height: 820 }),
     minWidth: 820,
-    minHeight: 620,
+    minHeight: 900,
     resizable: true,
     show: false,
     icon: createAppIcon(),
